@@ -1,4 +1,5 @@
-Flask
-Gunicorn
-flask-socketio
-eventlet
+flask-socketio 
+gevent 
+gevent-websocket 
+gunicorn
+flask-cors

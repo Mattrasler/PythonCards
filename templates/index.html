@@ -1,30 +1,290 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>
-	Socket IO
-	</title>
-<script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Game Board</title>
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js" integrity="sha384-kzavj5fiMwLKzzD1f8S7TeoVIEi7uKHvbTA3ueZkrzYq75pNQUiUi6Dy98Q3fxb0" crossorigin="anonymous"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #222; color: #fff; padding: 20px; }
+        .controls { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        button, select { font-weight: bold; color: white; border: none; padding: 10px 15px; font-size: 16px; border-radius: 4px; cursor: pointer; margin-right: 10px; vertical-align: middle; }
+        button:hover { filter: brightness(0.9); }
+        #dealBtn { background: #28a745; }
+        #shuffleBtn { background: #dc3545; }
+        #drawBtn { background: #007bff; }
+        #passBtn { background: #e67e22; }
+        
+        /* Dropdown style */
+        #activeUserSelector { background: #444; border: 1px solid #666; color: #fff; }
+        input { padding: 8px; font-size: 16px; width: 60px; border-radius: 4px; border: 1px solid #ccc; text-align: center; vertical-align: middle; color: black; }
+        .error { color: #ff6b6b; font-weight: bold; margin-top: 10px; }
+        
+        .game-info { font-size: 18px; margin-bottom: 20px; color: #ffc107; display: flex; align-items: center; gap: 40px; }
+        .turn-highlight { background: #ffc107; color: #222; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+        
+        .card-visual { background: white; color: black; font-size: 28px; width: 60px; height: 90px; display: inline-flex; justify-content: center; align-items: center; border-radius: 6px; font-weight: bold; box-shadow: 0 4px 8px rgba(0,0,0,0.3); border: 1px solid #ccc; vertical-align: middle; }
+        .card-visual.red-card { color: #ff4d4d; }
+        .hidden { display: none; }
+
+        .players-container { display: flex; flex-wrap: wrap; gap: 20px; }
+        
+        /* Turn-based visual styles */
+        .player-card { background: #444; border: 2px solid #555; border-radius: 8px; padding: 15px; min-width: 220px; transition: all 0.3s ease; opacity: 0.5; }
+        .player-card.active-turn-card { opacity: 1; border-color: #ffc107; box-shadow: 0 0 15px rgba(255, 193, 7, 0.4); }
+        
+        .player-name { font-size: 20px; border-bottom: 2px solid #555; padding-bottom: 5px; margin-bottom: 10px; color: #00adb5; }
+        .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 22px; text-align: center; }
+        
+        .hand-card { background: #555; border: 1px solid #666; padding: 8px 0; border-radius: 4px; cursor: pointer; transition: transform 0.1s ease, background 0.1s ease; }
+        .hand-card:hover { background: #666; transform: scale(1.05); border-color: #00adb5; }
+        .hand-card.red-card { color: #ff4d4d; }
+		
+		.hand-card {
+			background: #555;
+			border: 1px solid #666;
+			padding: 8px 0;
+			border-radius: 4px;
+			cursor: pointer;
+			position: relative;
+			user-select: none; /* Prevents text highlighting on double-clicks */
+			transition: transform 0.1s ease, background 0.1s ease;
+		}
+
+		/* Subtle icon label help indicator for face-down elements */
+		.hand-card.face-down::after {
+			content: "⚡👁"; /* Lightning indicates a double click is needed to view */
+			position: absolute;
+			bottom: 2px;
+			right: 5px;
+			font-size: 11px;
+			opacity: 0.4;
+			color: white;
+		}
+		.hand-card:hover::after {
+			opacity: 1;
+		}
+    </style>
 </head>
 <body>
-    <input id="msg" type="text" placeholder="Type a message...">
-    <button onclick="sendMessage()">Send</button>
-    <ul id="messages"></ul>
+
+    <h1>Golf</h1>
+
+    <div class="controls">
+        <button id="shuffleBtn">Reset & Shuffle</button>
+        <label for="numPlayers">Players:</label>
+        <input type="number" id="numPlayers" value="3" min="1" max="12">
+        <button id="dealBtn">Deal Cards</button>
+        
+        <!-- Dropdown to choose who is currently pressing the buttons -->
+        <label for="activeUserSelector">Acting As:</label>
+        <select id="activeUserSelector">
+            <option value="Player 1">Player 1</option>
+        </select>
+		
+		<!-- NEW NAME CHANGER FIELDS -->
+		<input type="text" id="newNameInput" placeholder="New Name" style="width: 110px;">
+		<button id="changeNameBtn" style="background: #9b59b6;">Change Name</button>
+
+
+        <button id="drawBtn">Draw Card</button>
+        <button id="passBtn">Pass Card</button>
+        <div class="error" id="errorMsg"></div>
+    </div>
+
+    <div class="game-info">
+        <div>Current Turn: <span id="turnDisplay" class="turn-highlight">None</span></div>
+        <div>Cards in deck: <span id="deckCount">0</span></div>
+        
+        <div id="drawDisplay" class="hidden">
+            Face-Up: <span id="cardSlot"></span>
+        </div>
+
+        <div>
+            Discard Pile (<span id="discardCount">0</span>): 
+            <span id="discardSlot">---</span>
+        </div>
+    </div>
+
+    <div class="players-container" id="playersBoard"></div>
 
     <script>
-        const socket = io();
+        const socket = io(); 
 
-        socket.on('response', (msg) => {
-            const item = document.createElement('li');
-            item.textContent = msg.data;
-            document.getElementById('messages').appendChild(item);
+        const shuffleBtn = document.getElementById('shuffleBtn');
+        const dealBtn = document.getElementById('dealBtn');
+        const drawBtn = document.getElementById('drawBtn');
+        const passBtn = document.getElementById('passBtn');
+        const numPlayersInput = document.getElementById('numPlayers');
+        const activeUserSelector = document.getElementById('activeUserSelector');
+        const errorMsg = document.getElementById('errorMsg');
+        const deckCount = document.getElementById('deckCount');
+        const turnDisplay = document.getElementById('turnDisplay');
+        const playersBoard = document.getElementById('playersBoard');
+        const drawDisplay = document.getElementById('drawDisplay');
+        const cardSlot = document.getElementById('cardSlot');
+        const discardCount = document.getElementById('discardCount');
+        const discardSlot = document.getElementById('discardSlot');
+		const changeNameBtn = document.getElementById('changeNameBtn');
+		const newNameInput = document.getElementById('newNameInput');
+		
+		// Bind the name updater click event listener to push data to python backend
+		changeNameBtn.addEventListener('click', () => {
+			const oldName = activeUserSelector.value;
+			const newName = newNameInput.value;
+			
+			socket.emit('change_player_name', {
+				old_name: oldName,
+				new_name: newName
+			});
+			
+			newNameInput.value = ""; // Clean input box text clear
+		});
+
+
+        // Helper function to figure out who is performing an action
+        function getCurrentActingPlayer() {
+            return activeUserSelector.value;
+        }
+
+        shuffleBtn.addEventListener('click', () => {
+            socket.emit('shuffle_deck');
         });
 
-        function sendMessage() {
-            const input = document.getElementById('msg');
-            socket.emit('message', input.value);
-            input.value = '';
-        }
-    </script>
-</body>
-</html>
+        dealBtn.addEventListener('click', () => {
+            const players = numPlayersInput.value;
+            socket.emit('deal_cards', { num_players: players });
+        });
+
+        // Pass the acting player along with the actions
+        drawBtn.addEventListener('click', () => {
+            socket.emit('draw_card', { player_name: activeUserSelector.value });
+        });
+
+        passBtn.addEventListener('click', () => {
+            socket.emit('pass_card', { player_name: activeUserSelector.value });
+        });
+
+        socket.on('state_updated', (data) => {
+            deckCount.textContent = data.deck_count;
+            errorMsg.textContent = data.error || "";
+            turnDisplay.textContent = data.current_player || "Game Not Started";
+
+            // Dynamically synchronize the "Acting As" dropdown selections based on dealt players
+            const totalActivePlayers = Object.keys(data.players);
+			if (totalActivePlayers.length > 0) {
+				const previousSelection = activeUserSelector.value;
+				activeUserSelector.innerHTML = "";
+				
+				totalActivePlayers.forEach(p => {
+					const opt = document.createElement('option');
+					opt.value = p;
+					opt.textContent = p;
+					activeUserSelector.appendChild(opt);
+				});
+
+				// Check if the previously selected name still exists (or has changed)
+				if (totalActivePlayers.includes(previousSelection)) {
+					activeUserSelector.value = previousSelection;
+				} else if (data.current_player && totalActivePlayers.includes(data.current_player)) {
+					// Fall back to the active turn player if old profile key name has changed
+					activeUserSelector.value = data.current_player;
+				}
+			}
+
+            // Render Face-up area
+            if (data.drawn_card) {
+                drawDisplay.classList.remove('hidden');
+                cardSlot.innerHTML = '';
+                const cardSpan = document.createElement('span');
+                cardSpan.className = 'card-visual';
+                if (data.drawn_card.includes('♥') || data.drawn_card.includes('♦')) {
+                    cardSpan.classList.add('red-card');
+                }
+                cardSpan.textContent = data.drawn_card;
+                cardSlot.appendChild(cardSpan);
+            } else {
+                drawDisplay.classList.add('hidden');
+            }
+
+            // Render Discard Pile
+            discardCount.textContent = data.discard_pile.length;
+            if (data.discard_pile.length > 0) {
+                const topDiscard = data.discard_pile[data.discard_pile.length - 1];
+                discardSlot.innerHTML = '';
+                const discardSpan = document.createElement('span');
+                discardSpan.className = 'card-visual';
+                if (topDiscard.includes('♥') || topDiscard.includes('♦')) {
+                    discardSpan.classList.add('red-card');
+                }
+                discardSpan.textContent = topDiscard;
+                discardSlot.appendChild(discardSpan);
+            } else {
+                discardSlot.textContent = "---";
+            }
+
+            // Render Players Board Grid Layout
+            playersBoard.innerHTML = "";
+			Object.keys(data.players).forEach(playerName => {
+				const playerCard = document.createElement('div');
+				playerCard.className = 'player-card';
+				
+				if (playerName === data.current_player) {
+					playerCard.classList.add('active-turn-card');
+				}
+
+				const nameDiv = document.createElement('div');
+				nameDiv.className = 'player-name';
+				nameDiv.textContent = playerName + (playerName === data.current_player ? " (Active)" : "");
+				playerCard.appendChild(nameDiv);
+
+				const cardsDiv = document.createElement('div');
+				cardsDiv.className = 'cards';
+
+				data.players[playerName].forEach((cardObj, index) => {
+					const cardDiv = document.createElement('div');
+					cardDiv.className = 'hand-card';
+					cardDiv.dataset.playerName = playerName; 
+					cardDiv.dataset.cardIndex = index;
+
+					if (data.drawn_card && playerName === data.current_player) {
+						cardDiv.classList.add('swapping-draw');
+					}
+
+					if (cardObj.visible) {
+						if (cardObj.value.includes('♥') || cardObj.value.includes('♦')) {
+							cardDiv.classList.add('red-card');
+						}
+						cardDiv.textContent = cardObj.value;
+					} else {
+						cardDiv.classList.add('face-down');
+						cardDiv.textContent = "🂠"; 
+					}
+
+					// 1. Single Click Listener: NOW Handles Turn Swapping
+					cardDiv.addEventListener('click', (e) => {
+						socket.emit('swap_card', {
+							player_name: activeUserSelector.value,
+							card_index: cardDiv.dataset.cardIndex
+						});
+					});
+
+					// 2. Double Click Listener: NOW Handles Card Revealing safely
+					cardDiv.addEventListener('dblclick', (e) => {
+						if (!cardObj.visible) {
+							socket.emit('reveal_card', {
+								player_name: activeUserSelector.value,     // Who is clicking right now
+								target_player: cardDiv.dataset.playerName, // Whose card is it
+								card_index: cardDiv.dataset.cardIndex
+							});
+						}
+					});
+
+					cardsDiv.appendChild(cardDiv);
+				});
+
+				playerCard.appendChild(cardsDiv);
+				playersBoard.appendChild(playerCard);
+			});
+		});
+	</script>
