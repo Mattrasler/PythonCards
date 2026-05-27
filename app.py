@@ -11,7 +11,7 @@ HTML_TEMPLATE = """
 <html>
 <head>
     <title>Flask-SocketIO Chat</title>
-    <script src="https://socket.io"></script>
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js" integrity="sha384-kzavj5fiMwLKzzD1f8S7TeoVIEi7uKHvbTA3ueZkrzYq75pNQUiUi6Dy98Q3fxb0" crossorigin="anonymous"></script>
 </head>
 <body>
     <h2>Broadcast Message Board</h2>
