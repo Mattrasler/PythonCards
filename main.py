@@ -1,143 +1,137 @@
-import random
+import html
 from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
-# Initialize Flask app
+# Initialize Flask app and configure a secret key
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret_card_key_123'
+app.config['SECRET_KEY'] = 'gunicorn_chat_secret_987'
 
-# Initialize SocketIO with asgi async_mode for Uvicorn compatibility
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='asgi')
+# Initialize SocketIO with eventlet async mode for Gunicorn production support
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# --- Game Logic Constants ---
-SUITS = ['♠', '♥', '♦', '♣']
-RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+# Simple server-side list to keep track of the message history
+message_store = []
 
-class GameState:
-    def __init__(self):
-        self.deck = []
-        self.history = []  # To store drawn cards and actions
-        self.shuffle_decks()
-
-    def shuffle_decks(self):
-        # Combine 3 standard decks (52 * 3 = 156 cards)
-        single_deck = [f"{r}{s}" for r in RANKS for s in SUITS]
-        self.deck = single_deck * 3
-        random.shuffle(self.deck)
-        self.history = [{"type": "system", "msg": "Decks shuffled! 156 cards ready."}]
-
-    def draw_card(self, player_id):
-        if not self.deck:
-            return None
-        card = self.deck.pop(0)
-        action = {"type": "draw", "player": player_id, "card": card, "remaining": len(self.deck)}
-        self.history.insert(0, action)
-        return action
-
-# Global game instance
-game = GameState()
-
-# --- HTML Template (Embedded for Single-File Portability) ---
+# --- Integrated HTML/CSS/JS Interface ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3-Deck Real-Time Cards</title>
+    <title>Real-Time Broadcast Hub</title>
     <script src="https://cloudflare.com"></script>
     <style>
         :root {
-            --bg-color: #1a472a; /* Classic card table green */
-            --card-white: #ffffff;
-            --text-light: #f0f0f0;
+            --bg-dark: #0f172a;
+            --panel-bg: #1e293b;
+            --text-main: #f8fafc;
+            --accent-blue: #3b82f6;
         }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-light);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
             margin: 0;
             display: flex;
-            flex-direction: column;
+            justify-content: center;
             align-items: center;
             min-height: 100vh;
         }
-        .container {
-            width: 90%;
-            max-width: 800px;
-            text-align: center;
-            padding: 20px;
-        }
-        .controls {
-            margin: 20px 0;
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-        }
-        button {
-            padding: 12px 24px;
-            font-size: 16px;
-            cursor: pointer;
-            border: none;
-            border-radius: 8px;
-            transition: transform 0.1s, background 0.3s;
-            font-weight: bold;
-        }
-        .btn-draw { background: #e67e22; color: white; }
-        .btn-shuffle { background: #c0392b; color: white; }
-        button:active { transform: scale(0.95); }
-        button:hover { filter: brightness(1.1); }
-
-        .status-bar {
-            background: rgba(0,0,0,0.3);
-            padding: 10px;
-            border-radius: 20px;
-            margin-bottom: 20px;
-        }
-
-        #action-log {
-            background: rgba(255,255,255,0.1);
+        .chat-container {
+            width: 100%;
+            max-width: 600px;
+            background: var(--panel-bg);
             border-radius: 12px;
-            padding: 15px;
-            height: 300px;
-            overflow-y: auto;
-            text-align: left;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            height: 80vh;
+            overflow: hidden;
         }
-        .log-entry {
-            padding: 8px;
-            border-radius: 6px;
+        .header {
             background: rgba(0,0,0,0.2);
-            animation: fadeIn 0.3s ease;
+            padding: 15px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-weight: 600;
         }
-        .card-val {
+        .user-tag {
+            color: #38bdf8;
+            font-size: 0.9em;
+        }
+        .message-pane {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .msg-bubble {
+            background: rgba(255,255,255,0.05);
+            padding: 10px 14px;
+            border-radius: 8px;
+            max-width: 85%;
+            word-wrap: break-word;
+            animation: popIn 0.2s ease-out;
+        }
+        .msg-user {
+            font-size: 0.8em;
+            color: #94a3b8;
+            margin-bottom: 4px;
             font-weight: bold;
-            color: #ffcc00;
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
+        .input-area {
+            padding: 15px 20px;
+            background: rgba(0,0,0,0.1);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            flex: 1;
+            background: #0f172a;
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 12px;
+            border-radius: 6px;
+            color: white;
+            font-size: 14px;
+        }
+        input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        button {
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            padding: 0 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        button:hover { background: #2563eb; }
+        @keyframes popIn {
+            from { opacity: 0; transform: translateY(5px); }
             to { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Multiplayer 3-Deck Cards (Uvicorn Engine)</h1>
+
+    <div class="chat-container">
+        <div class="header">
+            Broadcast Hub &mdash; Assigning ID...</span>
+        </div>
         
-        <div class="status-bar">
-            Connected as: <span id="player-name">Connecting...</span> | 
-            Cards Remaining: <span id="card-count">156</span>
+        <div class="message-pane" id="message-pane">
+            <!-- Messages from all users populate here instantly -->
         </div>
 
-        <div class="controls">
-            <button class="btn-draw" onclick="drawCard()">Draw Card</button>
-            <button class="btn-shuffle" onclick="shuffleDecks()">Shuffle All</button>
-        </div>
-
-        <div id="action-log">
-            <!-- Real-time actions will appear here -->
+        <div class="input-area">
+            <input type="text" id="msg-input" placeholder="Type a broadcast message..." onkeydown="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()">Send</button>
         </div>
     </div>
 
@@ -146,100 +140,87 @@ HTML_TEMPLATE = """
         let myId = "";
 
         socket.on('connect', () => {
-            myId = socket.id.substring(0, 5);
-            document.getElementById('player-name').innerText = "Player_" + myId;
+            myId = "User_" + socket.id.substring(0, 5);
+            document.getElementById('identity').innerText = myId;
         });
 
-        socket.on('init', (data) => {
-            document.getElementById('card-count').innerText = data.remaining;
-            updateLog(data.history);
+        // Receives the existing history when first loading the page
+        socket.on('load_history', (history) => {
+            const pane = document.getElementById('message-pane');
+            pane.innerHTML = '';
+            history.forEach(appendMessage);
+            scrollToBottom();
         });
 
-        socket.on('card_drawn', (data) => {
-            document.getElementById('card-count').innerText = data.remaining;
-            addSingleLog(data);
+        // Receives instant messages broadcast from the server
+        socket.on('new_broadcast', (data) => {
+            appendMessage(data);
+            scrollToBottom();
         });
 
-        socket.on('decks_shuffled', (data) => {
-            document.getElementById('card-count').innerText = "156";
-            const log = document.getElementById('action-log');
-            log.innerHTML = '';
-            addSingleLog({type: 'system', msg: 'Decks were shuffled by a player!'});
-        });
+        function sendMessage() {
+            const input = document.getElementById('msg-input');
+            const text = input.value.trim();
+            if (!text) return;
 
-        function drawCard() {
-            socket.emit('request_draw');
+            socket.emit('submit_msg', { message: text });
+            input.value = '';
         }
 
-        function shuffleDecks() {
-            if(confirm("Shuffle all 3 decks? This clears the current board.")) {
-                socket.emit('request_shuffle');
+        function appendMessage(data) {
+            const pane = document.getElementById('message-pane');
+            const container = document.createElement('div');
+            container.className = 'msg-bubble';
+
+            // Mark your own messages uniquely
+            if(data.user === myId) {
+                container.style.borderLeft = "3px solid var(--accent-blue)";
             }
+
+            container.innerHTML = `<div class="msg-user">${data.user}</div><div>${data.message}</div>`;
+            pane.appendChild(container);
         }
 
-        function addSingleLog(action) {
-            const log = document.getElementById('action-log');
-            const div = document.createElement('div');
-            div.className = 'log-entry';
-            
-            if (action.type === 'draw') {
-                const isMe = action.player === myId ? "(You)" : `(Player_${action.player})`;
-                div.innerHTML = `<span>${isMe} drew </span><span class="card-val">${action.card}</span>`;
-            } else {
-                div.innerHTML = `<i>${action.msg}</i>`;
-            }
-            
-            log.prepend(div);
-        }
-
-        function updateLog(history) {
-            const log = document.getElementById('action-log');
-            log.innerHTML = '';
-            history.forEach(item => {
-                const div = document.createElement('div');
-                div.className = 'log-entry';
-                if (item.type === 'draw') {
-                    div.innerHTML = `Player_${item.player} drew <span class="card-val">${item.card}</span>`;
-                } else {
-                    div.innerHTML = `<i>${item.msg}</i>`;
-                }
-                log.appendChild(div);
-            });
+        function scrollToBottom() {
+            const pane = document.getElementById('message-pane');
+            pane.scrollTop = pane.scrollHeight;
         }
     </script>
 </body>
 </html>
 """
 
-# Wrapper required by Render/Uvicorn to mount WSGI (Flask) onto ASGI architecture
-asgi_app = socketio.asgi_app
+# --- Routes and WebSockets ---
 
 @app.route('/')
-def index():
+def home():
     return render_template_string(HTML_TEMPLATE)
 
 @socketio.on('connect')
-def handle_connect():
-    emit('init', {
-        'remaining': len(game.deck),
-        'history': game.history
-    })
+def handle_user_connect():
+    # Provide the newly connected client with the historical logs
+    emit('load_history', message_store)
 
-@socketio.on('request_draw')
-def handle_draw():
-    player_id = request.sid[:5]
-    action = game.draw_card(player_id)
-    if action:
-        socketio.emit('card_drawn', action)
-    else:
-        emit('error', {'msg': 'Deck is empty! Please shuffle.'})
-
-@socketio.on('request_shuffle')
-def handle_shuffle():
-    game.shuffle_decks()
-    socketio.emit('decks_shuffled', {'remaining': 156})
+@socketio.on('submit_msg')
+def handle_new_msg(data):
+    # Extract structural components safely
+    user_id = f"User_{request.sid[:5]}"
+    raw_text = data.get('message', '').strip()
+    
+    if raw_text:
+        # Sanitize text to prevent simple script injection attacks
+        clean_text = html.escape(raw_text)
+        
+        payload = {'user': user_id, 'message': clean_text}
+        message_store.append(payload)
+        
+        # Restrict back-history memory buffer to the last 50 entries
+        if len(message_store) > 50:
+            message_store.pop(0)
+            
+        # BROADCAST to all connected web clients instantly
+        socketio.emit('new_broadcast', payload)
 
 if __name__ == '__main__':
-    # Local fallback testing
-    import uvicorn
-    uvicorn.run("main:asgi_app", host="127.0.0.1", port=5000, log_level="info", reload=True)
+    # Local fallback execution without gunicorn configuration
+    socketio.run(app, debug=True)
