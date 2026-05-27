@@ -26,9 +26,22 @@ GAME_STATE = {
 
 
 def create_triple_deck():
+    """Generates 3 standard 52-card decks combined with 2 Jokers per deck (162 cards total),
+
+    then randomizes their layout distribution order cleanly.
+    """
     suits = ['♠', '♥', '♦', '♣']
     ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+    
+    # Create one standard deck of 52 cards
     single_deck = [f"{rank}{suit}" for suit in suits for rank in ranks]
+    
+    # Add 2 Jokers to this single deck. 
+    # 'JK' uses 'K' at the end to mimic a suit slot so rank-stripping works seamlessly.
+    single_deck.append("JK")
+    single_deck.append("JK")
+    
+    # Multiply by 3 to create the full triple deck (162 cards total)
     triple_deck = single_deck * 3
     random.shuffle(triple_deck)
     return triple_deck
