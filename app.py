@@ -12,12 +12,18 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 GAME_STATE = {
     'deck': [],
     'players': {},
-    'player_order': [],      # Ordered list of player names (e.g., ["Player 1", "Player 2"])
-    'current_player': None,   # Name of the player who must act
-    'drawn_card': None, 
-    'discard_pile': [],  
-    'error': None
+    'player_order': [],
+    'current_player': None,
+    'drawn_card': None,
+    'discard_pile': [],
+    'error': None,
+    
+    # --- ADD THESE THREE FIELDS ---
+    'final_round_triggered': False,  # True when someone reveals all 9 cards
+    'triggering_player': None,       # Stores who forced the end of the round
+    'turns_remaining': 0             # Countdown for how many turns are left
 }
+
 
 def create_triple_deck():
     suits = ['♠', '♥', '♦', '♣']
@@ -28,13 +34,28 @@ def create_triple_deck():
     return triple_deck
 
 def advance_turn():
-    """Helper to move the turn ticker forward to the next player systematically"""
+    """Helper to move the turn ticker forward systematically, accounting for final round rules"""
     if not GAME_STATE['player_order']:
         return
+
+    # Check if the final round is ending right now
+    if GAME_STATE['final_round_triggered'] and GAME_STATE['turns_remaining'] <= 0:
+        GAME_STATE['current_player'] = None
+        GAME_STATE['error'] = "🏁 Round has officially ended! Calculate your scores."
+        return
+
     try:
         current_idx = GAME_STATE['player_order'].index(GAME_STATE['current_player'])
         next_idx = (current_idx + 1) % len(GAME_STATE['player_order'])
         GAME_STATE['current_player'] = GAME_STATE['player_order'][next_idx]
+        
+        # Decrement turns if we are inside the final wrap-around countdown
+        if GAME_STATE['final_round_triggered']:
+            GAME_STATE['turns_remaining'] -= 1
+            if GAME_STATE['turns_remaining'] == 0:
+                # Force end of game on the next cycle check
+                pass
+                
     except ValueError:
         GAME_STATE['current_player'] = GAME_STATE['player_order'][0]
 
@@ -57,6 +78,22 @@ def check_discard_for_reverse():
         # Optional: Add a validation message to alert players via frontend
         GAME_STATE['error'] = f"🔄 SANDWICH {rank1}! Turn order has been REVERSED!"
 
+def check_for_final_round(player_name):
+    """Checks if a player has revealed all 9 of their cards to trigger the final turn countdown."""
+    if GAME_STATE['final_round_triggered']:
+        return
+
+    hand = GAME_STATE['players'].get(player_name, [])
+    # Count how many cards are visible
+    visible_count = sum(1 for card in hand if card.get('visible', False))
+
+    if visible_count == 9:
+        GAME_STATE['final_round_triggered'] = True
+        GAME_STATE['triggering_player'] = player_name
+        # Every *other* player gets one turn, so count is total players minus 1
+        GAME_STATE['turns_remaining'] = len(GAME_STATE['player_order']) - 1
+        GAME_STATE['error'] = f"🚨 {player_name} revealed all cards! Final round started. {GAME_STATE['turns_remaining']} turns left!"
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -72,6 +109,10 @@ def handle_shuffle():
     GAME_STATE['drawn_card'] = None
     GAME_STATE['discard_pile'] = []
     GAME_STATE['error'] = None
+    GAME_STATE['final_round_triggered'] = False
+    GAME_STATE['triggering_player'] = None
+    GAME_STATE['turns_remaining'] = 0
+
     
     # Keep the existing players and order, but empty their card hands
     if GAME_STATE['player_order']:
@@ -214,9 +255,9 @@ def handle_swap(data):
             player_hand[card_index] = {'value': active_draw, 'visible': True}
             GAME_STATE['discard_pile'].append(card_to_discard)
             GAME_STATE['drawn_card'] = None
-            
-            # --- INSERT CHECK HERE ---
             check_discard_for_reverse()
+
+            check_for_final_round(player_name)
             
             advance_turn()
             emit_state_update(broadcast=True)
@@ -231,9 +272,10 @@ def handle_swap(data):
         top_discard_card = GAME_STATE['discard_pile'].pop()
         player_hand[card_index] = {'value': top_discard_card, 'visible': True}
         GAME_STATE['discard_pile'].append(card_to_discard)
-        
-        # --- INSERT CHECK HERE ---
+                
         check_discard_for_reverse()
+
+        check_for_final_round(player_name)
         
         advance_turn()
         emit_state_update(broadcast=True)
@@ -306,6 +348,7 @@ def handle_reveal(data):
         # Flip the visibility status flag if it's currently face-down
         if not card_obj['visible']:
             card_obj['visible'] = True
+            check_for_final_round(acting_player)
             emit_state_update(broadcast=True)
         else:
             GAME_STATE['error'] = "That card is already revealed face-up!"
