@@ -38,6 +38,25 @@ def advance_turn():
     except ValueError:
         GAME_STATE['current_player'] = GAME_STATE['player_order'][0]
 
+def check_discard_for_reverse():
+    """Checks if the top 3 cards in the discard pile have matching ranks. 
+    If they do, reverses the global player turn order.
+    """
+    discard = GAME_STATE['discard_pile']
+    if len(discard) < 3:
+        return
+
+    # Extract the rank from the last 3 cards by stripping off the suit character at the end
+    # Works for single ranks ("2", "A") and tens ("10")
+    rank1 = discard[-1][:-1]
+    rank2 = discard[-2][:-1]
+    rank3 = discard[-3][:-1]
+
+    if rank1 == rank2 == rank3:
+        GAME_STATE['player_order'].reverse()
+        # Optional: Add a validation message to alert players via frontend
+        GAME_STATE['error'] = f"🔄 SANDWICH {rank1}! Turn order has been REVERSED!"
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -162,8 +181,12 @@ def handle_pass(data):
         return
 
     GAME_STATE['discard_pile'].append(card_to_discard)
-    GAME_STATE['drawn_card'] = None  
-    advance_turn()  # Turn passes on a successful move
+    GAME_STATE['drawn_card'] = None
+    
+    # --- INSERT CHECK HERE ---
+    check_discard_for_reverse()
+    
+    advance_turn() # Turn passes on a successful move
     emit_state_update(broadcast=True)
 
 @socketio.on('swap_card')
@@ -182,16 +205,19 @@ def handle_swap(data):
         card_index = int(card_index)
         player_hand = GAME_STATE['players'][player_name]
         old_hand_card_obj = player_hand[card_index]
-        
+
         # Extract the raw card string value for the discard pile
         card_to_discard = old_hand_card_obj['value']
 
         # SCENARIO A: A card was drawn from the main deck
         if active_draw:
-            # 2. Replaced card goes to hand face up (visible=True)
             player_hand[card_index] = {'value': active_draw, 'visible': True}
             GAME_STATE['discard_pile'].append(card_to_discard)
-            GAME_STATE['drawn_card'] = None 
+            GAME_STATE['drawn_card'] = None
+            
+            # --- INSERT CHECK HERE ---
+            check_discard_for_reverse()
+            
             advance_turn()
             emit_state_update(broadcast=True)
             return
@@ -203,10 +229,11 @@ def handle_swap(data):
             return
 
         top_discard_card = GAME_STATE['discard_pile'].pop()
-        
-        # 3. New card from discard pile is placed face up
         player_hand[card_index] = {'value': top_discard_card, 'visible': True}
         GAME_STATE['discard_pile'].append(card_to_discard)
+        
+        # --- INSERT CHECK HERE ---
+        check_discard_for_reverse()
         
         advance_turn()
         emit_state_update(broadcast=True)
