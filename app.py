@@ -49,12 +49,19 @@ def handle_connect():
 @socketio.on('shuffle_deck')
 def handle_shuffle():
     GAME_STATE['deck'] = create_triple_deck()
-    GAME_STATE['players'] = {}
-    GAME_STATE['player_order'] = []
     GAME_STATE['current_player'] = None
-    GAME_STATE['drawn_card'] = None  
-    GAME_STATE['discard_pile'] = []  
+    GAME_STATE['drawn_card'] = None
+    GAME_STATE['discard_pile'] = []
     GAME_STATE['error'] = None
+    
+    # Keep the existing players and order, but empty their card hands
+    if GAME_STATE['player_order']:
+        for name in GAME_STATE['player_order']:
+            GAME_STATE['players'][name] = []
+    else:
+        GAME_STATE['players'] = {}
+        GAME_STATE['player_order'] = []
+        
     emit_state_update(broadcast=True)
 
 @socketio.on('deal_cards')
