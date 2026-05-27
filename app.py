@@ -69,7 +69,7 @@ def handle_deal(data):
     deck = GAME_STATE['deck']
     num_players = int(data.get('num_players', 1))
     GAME_STATE['error'] = None
-    GAME_STATE['drawn_card'] = None  
+    GAME_STATE['drawn_card'] = None
 
     if not deck:
         GAME_STATE['error'] = "Shuffle the deck first!"
@@ -82,24 +82,41 @@ def handle_deal(data):
         emit_state_update(broadcast=True)
         return
 
+    # 1. Reuse existing names/order if they exist, or fill missing seats
+    player_order = list(GAME_STATE['player_order'])
     player_hands = {}
-    player_order = []
-    for i in range(num_players):
-        name = f"Player {i+1}"
+
+    # Adjust list to match the requested number of players
+    if len(player_order) > num_players:
+        # Truncate if the lobby size was reduced
+        player_order = player_order[:num_players]
+    elif len(player_order) < num_players:
+        # Append new generic players if the lobby size increased
+        for i in range(len(player_order), num_players):
+            new_name = f"Player {i + 1}"
+            # Ensure name isn't a duplicate if someone previously renamed themselves
+            while new_name in player_order:
+                new_name = f"Player {random.randint(100, 999)}"
+            player_order.append(new_name)
+
+    # Initialize empty hands for the selected players
+    for name in player_order:
         player_hands[name] = []
-        player_order.append(name)
-    
+
+    # 2. Deal out the structural face-down card layout (9 cards per person)
     for round_num in range(3):
         for name in player_order:
-            # 1. Store cards as hidden objects instead of raw strings
             three_cards = [{'value': deck.pop(), 'visible': False} for _ in range(3)]
             player_hands[name].extend(three_cards)
 
+    # 3. Commit back to global application memory state
     GAME_STATE['deck'] = deck
     GAME_STATE['players'] = player_hands
     GAME_STATE['player_order'] = player_order
     GAME_STATE['current_player'] = player_order[0] if player_order else None
+    
     emit_state_update(broadcast=True)
+
 
 @socketio.on('draw_card')
 def handle_draw(data):
