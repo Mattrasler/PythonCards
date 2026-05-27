@@ -1,11 +1,13 @@
 import random
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
-# Initialize Flask app and SocketIO
+# Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret_card_key_123'
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Initialize SocketIO with asgi async_mode for Uvicorn compatibility
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='asgi')
 
 # --- Game Logic Constants ---
 SUITS = ['♠', '♥', '♦', '♣']
@@ -43,7 +45,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3-Deck Real-Time Cards</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cloudflare.com"></script>
     <style>
         :root {
             --bg-color: #1a472a; /* Classic card table green */
@@ -122,7 +124,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>Multiplayer 3-Deck Cards</h1>
+        <h1>Multiplayer 3-Deck Cards (Uvicorn Engine)</h1>
         
         <div class="status-bar">
             Connected as: <span id="player-name">Connecting...</span> | 
@@ -148,23 +150,20 @@ HTML_TEMPLATE = """
             document.getElementById('player-name').innerText = "Player_" + myId;
         });
 
-        // Initialize state or catch up with history
         socket.on('init', (data) => {
             document.getElementById('card-count').innerText = data.remaining;
             updateLog(data.history);
         });
 
-        // Listen for draw events
         socket.on('card_drawn', (data) => {
             document.getElementById('card-count').innerText = data.remaining;
             addSingleLog(data);
         });
 
-        // Listen for shuffle events
         socket.on('decks_shuffled', (data) => {
             document.getElementById('card-count').innerText = "156";
             const log = document.getElementById('action-log');
-            log.innerHTML = ''; // Clear for fresh start
+            log.innerHTML = '';
             addSingleLog({type: 'system', msg: 'Decks were shuffled by a player!'});
         });
 
@@ -212,7 +211,8 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- SocketIO Event Handlers ---
+# Wrapper required by Render/Uvicorn to mount WSGI (Flask) onto ASGI architecture
+asgi_app = socketio.asgi_app
 
 @app.route('/')
 def index():
@@ -220,7 +220,6 @@ def index():
 
 @socketio.on('connect')
 def handle_connect():
-    # Send current game state to the newly connected player
     emit('init', {
         'remaining': len(game.deck),
         'history': game.history
@@ -228,14 +227,9 @@ def handle_connect():
 
 @socketio.on('request_draw')
 def handle_draw():
-    # Use short version of session ID as player identifier
-    player_id = random.choice(['Alpha', 'Beta', 'Gamma', 'Delta']) # Placeholder if ID isn't ready
-    from flask import request
     player_id = request.sid[:5]
-    
     action = game.draw_card(player_id)
     if action:
-        # Broadcast the draw to EVERYONE
         socketio.emit('card_drawn', action)
     else:
         emit('error', {'msg': 'Deck is empty! Please shuffle.'})
@@ -243,9 +237,9 @@ def handle_draw():
 @socketio.on('request_shuffle')
 def handle_shuffle():
     game.shuffle_decks()
-    # Broadcast shuffle to EVERYONE
     socketio.emit('decks_shuffled', {'remaining': 156})
 
 if __name__ == '__main__':
-    # Local development run
-    socketio.run(app, debug=True)
+    # Local fallback testing
+    import uvicorn
+    uvicorn.run("main:asgi_app", host="127.0.0.1", port=5000, log_level="info", reload=True)
